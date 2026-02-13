@@ -1,16 +1,14 @@
 # JoyCaption - Advanced Image Captioning Tool
-
 ![JoyCaption Screenshot](gradio-app.webp)
 
-This is a simple Gradio GUI for the JoyCaption model.
+This is a simple Gradio GUI for the JoyCaption model with enhanced usability and stability.
 
 ## Installation
 
 ### Prerequisites
-
 - Python 3.8+ 
 - CUDA-capable GPU (recommended)
-- At least 24GB VRAM for bf16 precision (8GB for nf4 quantized mode)
+- At least 24GB VRAM recommended
 
 ### Setup
 
@@ -41,16 +39,9 @@ This is a simple Gradio GUI for the JoyCaption model.
 ### Optional: Install Liger Kernel
 For faster inference, you can install the Liger Kernel: https://github.com/linkedin/Liger-Kernel
 
-### Optional: Install bitsandbytes
-For 4-bit and 8-bit quantization, install bitsandbytes:
-```bash
-pip install bitsandbytes
-```
-
 ## Usage
 
 ### Single Image Captioning
-
 1. Upload an image using the left-hand panel
 2. Select a caption type and desired caption length
 3. (Optional) Open "Extra Options" and select any additional parameters
@@ -59,12 +50,12 @@ pip install bitsandbytes
 6. The generated caption will appear in the output box and can be copied or edited
 
 ### Batch Processing
-
 1. Switch to the "Batch Processing" tab
 2. Upload multiple images (PNG/JPEG/WEBP)
-3. Set the DataLoader Workers (CPU processes) and Batch Size based on your system capabilities
-4. Click "Start Batch Process & Create ZIP"
-5. Download the ZIP file containing all captions when processing completes
+3. Specify an output folder path where caption .txt files will be saved (the folder must already exist)
+4. Set the DataLoader Workers (CPU processes) and Batch Size based on your system capabilities
+5. Click "Start Batch Process"
+6. Caption files will be saved as .txt files in your specified output folder (one .txt file per image with matching filenames)
 
 ## Caption Types
 
@@ -85,10 +76,11 @@ pip install bitsandbytes
 
 > **Note on Booru modes**: They're optimized for anime-style/illustration imagery; accuracy may decrease with real-world photographs or abstract artwork.
 
-## Model Quantization
+## Features
 
-Select from different precision levels to balance quality and memory usage:
-
-- **bf16**: Highest quality, highest VRAM usage
-- **8-bit**: Good balance of quality and VRAM efficiency
-- **nf4 (4-bit)**: Lowest VRAM usage with slight quality degradation
+- **BFloat16 precision** for optimal quality and performance
+- **Batch processing** with customizable output locations
+- **Flexible caption styles** from formal descriptions to social media posts
+- **Adjustable generation parameters** (temperature, top-p, max tokens)
+- **Clean, accessible UI** with improved visibility and layout
+- **Progress tracking** for batch operations
