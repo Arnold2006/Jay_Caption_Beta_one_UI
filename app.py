@@ -26,8 +26,8 @@ try:
 except ModuleNotFoundError:
     _HAS_LIGER = False
 except Exception as e:
-	_HAS_LIGER = False
-	print(f"[WARN] Liger kernel could not be imported: {e}")
+    _HAS_LIGER = False
+    print(f"[WARN] Liger kernel could not be imported: {e}")
 
 
 
@@ -48,7 +48,7 @@ TITLE = f"""<style>
     border-radius: 4px;
     padding: 8px 12px;
     margin: 8px 0;
-    color: #d00;
+    color: #000 !important;
     font-size: 0.9em;
   }}
   
@@ -58,7 +58,7 @@ TITLE = f"""<style>
     border-radius: 4px;
     padding: 8px 12px;
     margin: 8px 0;
-    color: #00d;
+    color: #000 !important;
     font-size: 0.9em;
   }}
   
@@ -68,7 +68,7 @@ TITLE = f"""<style>
     border-radius: 4px;
     padding: 8px 12px;
     margin: 8px 0;
-    color: #080;
+    color: #000 !important;
     font-size: 0.9em;
   }}
   
@@ -80,8 +80,31 @@ TITLE = f"""<style>
     border-left: 4px solid #4b5563;
   }}
   
+  .panel-header h3 {{
+    color: #000 !important;
+    margin: 0 0 5px 0;
+    font-weight: 600 !important;
+  }}
+  
+  .panel-header p {{
+    color: #000 !important;
+    margin: 0;
+  }}
+  
   .compact-row {{
     margin-bottom: 0 !important;
+  }}
+  
+  /* Force Extra Options checkboxes to display vertically */
+  #extra_options_checkboxes label {{
+    display: block !important;
+    width: 100% !important;
+    margin-bottom: 8px !important;
+  }}
+  
+  #extra_options_checkboxes .wrap {{
+    display: flex !important;
+    flex-direction: column !important;
   }}
 
   #global_error {{
@@ -120,12 +143,13 @@ DESCRIPTION = """
 
 <h2>Quick-start (Batch tab)</h2>
 <ol>
-  <li><strong>Upload multiple images</strong> (PNG/JPEG/WEBP, any mix).
-      Filenames are used to name the output <code>.txt</code> files.</li>
+  <li><strong>Upload multiple images</strong> (PNG/JPEG/WEBP, any mix).</li>
+  <li><strong>Specify an output folder path</strong> where caption .txt files will be saved.
+      The folder must already exist and be writable.</li>
   <li>Set <strong>DataLoader Workers</strong> (CPU processes) and
       <strong>Batch Size</strong> to balance speed vs. GPU VRAM.</li>
-  <li>Press <kbd>Start Batch Process & Create ZIP</kbd>.
-      When finished, a ZIP containing all captions appears for download.</li>
+  <li>Press <kbd>Start Batch Process</kbd>.
+      Caption .txt files will be saved to your specified folder.</li>
 </ol>
 
 <!-- ───────────────────── Caption-type reference ──────────────────── -->
@@ -183,10 +207,6 @@ instantly.</p>
       higher =&nbsp;freer.</li>
   <li><strong>Max&nbsp;New Tokens</strong> – hard stop for the model’s output length.</li>
 </ul>
-
-<h2>Model Quantization</h2>
-<p>Select <kbd>bf16</kbd>, <kbd>8-bit</kbd>, or <kbd>nf4 (4-bit)</kbd>.
-Lower precision uses ~⅓–½ the VRAM but may degrade quality slightly.</p>
 
 </div>
 """
@@ -260,7 +280,6 @@ NAME_OPTION = "If there is a person/character in the image you must refer to the
 
 g_processor = None
 g_model: LlavaForConditionalGeneration | None = None
-g_quant: str | None = None
 
 def format_error(message: str) -> str:
 	"""Format an error message for display in the UI."""
@@ -280,9 +299,9 @@ def show_global_error(message: str):
 def hide_global_error():
 	return gr.update(value="", visible=False)
 
-def load_model(quant: str, status: gr.HTML | None = None):
+def load_model(status: gr.HTML | None = None):
 	"""Load the model and processor if not already loaded."""
-	global g_processor, g_model, g_quant
+	global g_processor, g_model
 	if g_processor is None:
 		print("Loading processor...")
 		if status is not None:
@@ -292,6 +311,14 @@ def load_model(quant: str, status: gr.HTML | None = None):
 			g_processor = AutoProcessor.from_pretrained(MODEL_PATH)
 			if g_processor.tokenizer.pad_token is None:
 				g_processor.tokenizer.pad_token = g_processor.tokenizer.eos_token
+			
+			# Fix lanczos interpolation issue by forcing BICUBIC resampling
+			# LANCZOS is not supported by PyTorch's interpolate function
+			if hasattr(g_processor, 'image_processor'):
+				if hasattr(g_processor.image_processor, 'resample'):
+					from PIL import Image as PILImage
+					g_processor.image_processor.resample = PILImage.Resampling.BICUBIC
+					print("[INFO] Set image processor resampling to BICUBIC to avoid lanczos error")
 		except Exception as e:
 			error_msg = f"Failed to load processor: {e}"
 			print(error_msg)
@@ -300,49 +327,24 @@ def load_model(quant: str, status: gr.HTML | None = None):
 			yield {global_error: show_global_error("Critical error: Model processor could not be loaded")}
 			return
 	
-	if g_model is None or g_quant != quant:
+	if g_model is None:
 		print("Loading model...")
 		if status is not None:
 			yield {status: format_info("Loading model weights...")}
-		
-		if g_model is not None:
-			g_model = None
 		
 		gc.collect()
 		torch.cuda.empty_cache()
 
 		try:
-			if quant == "bf16":
-				g_model = LlavaForConditionalGeneration.from_pretrained(MODEL_PATH, torch_dtype="bfloat16", device_map=0)
-				assert isinstance(g_model, LlavaForConditionalGeneration), f"Expected LlavaForConditionalGeneration, got {type(g_model)}"
-				if _HAS_LIGER:
-					try:
-						apply_liger_kernel_to_llama(model=g_model.language_model)  # Meow
-					except Exception as e:
-						print(f"[WARN] Liger kernel could not be applied: {e}")
-			else:
-				from transformers import BitsAndBytesConfig
-				if quant == "8bit":
-					qnt_config = BitsAndBytesConfig(
-						load_in_8bit=True,
-						llm_int8_skip_modules=["vision_tower", "multi_modal_projector"],   # Transformer's Siglip implementation has bugs when quantized, so skip those.
-					)
-				elif quant == "nf4":
-					qnt_config = BitsAndBytesConfig(
-						load_in_4bit=True,
-						bnb_4bit_quant_type="nf4",
-						bnb_4bit_compute_dtype=torch.bfloat16,
-						bnb_4bit_use_double_quant=True,
-						llm_int8_skip_modules=["vision_tower", "multi_modal_projector"],   # Transformer's Siglip implementation has bugs when quantized, so skip those.
-					)
-				else:
-					raise ValueError(f"Unknown quantization type: {quant}")
-				
-				g_model = LlavaForConditionalGeneration.from_pretrained(MODEL_PATH, torch_dtype="auto", device_map=0, quantization_config=qnt_config)
-				assert isinstance(g_model, LlavaForConditionalGeneration), f"Expected LlavaForConditionalGeneration, got {type(g_model)}"
+			g_model = LlavaForConditionalGeneration.from_pretrained(MODEL_PATH, torch_dtype="bfloat16", device_map=0)
+			assert isinstance(g_model, LlavaForConditionalGeneration), f"Expected LlavaForConditionalGeneration, got {type(g_model)}"
+			if _HAS_LIGER:
+				try:
+					apply_liger_kernel_to_llama(model=g_model.language_model)  # Meow
+				except Exception as e:
+					print(f"[WARN] Liger kernel could not be applied: {e}")
 
 			g_model.eval()
-			g_quant = quant
 			# Hide any global error when model loads successfully
 			yield {global_error: hide_global_error()}
 		except Exception as e:
@@ -350,7 +352,7 @@ def load_model(quant: str, status: gr.HTML | None = None):
 			print(error_msg)
 			if status is not None:
 				yield {status: format_error(error_msg)}
-			yield {global_error: show_global_error(f"Critical error: Model failed to load with {quant} precision")}
+			yield {global_error: show_global_error("Critical error: Model failed to load")}
 			return
 	
 	if status is not None:
@@ -425,8 +427,16 @@ def print_system_info():
 	print(header + indent("\n".join(lines), "   "))
 
 
+def preprocess_image(image: Image.Image) -> Image.Image:
+	"""Preprocess image to avoid lanczos interpolation issues."""
+	# Convert to RGB if needed
+	if image.mode != "RGB":
+		image = image.convert("RGB")
+	return image
+
+
 @torch.no_grad()
-def chat_joycaption(input_image: Image.Image, prompt: str, temperature: float, top_p: float, max_new_tokens: int, quant: str) -> Generator[dict, None, None]:
+def chat_joycaption(input_image: Image.Image, prompt: str, temperature: float, top_p: float, max_new_tokens: int) -> Generator[dict, None, None]:
 	# Hide any previous global errors
 	yield {global_error: hide_global_error()}
 
@@ -434,7 +444,7 @@ def chat_joycaption(input_image: Image.Image, prompt: str, temperature: float, t
 		yield {single_status_output: format_error("No image selected for captioning. Please upload an image."), output_caption_single: None}
 		return
 	
-	yield from load_model(quant=quant, status=single_status_output)
+	yield from load_model(status=single_status_output)
 	gc.collect()
 	torch.cuda.empty_cache()
 
@@ -456,6 +466,9 @@ def chat_joycaption(input_image: Image.Image, prompt: str, temperature: float, t
 	]
 
 	try:
+		# Preprocess image to avoid interpolation issues
+		input_image = preprocess_image(input_image)
+		
 		# Format the conversation
 		# WARNING: HF's handling of chat's on Llava models is very fragile.  This specific combination of processor.apply_chat_template(), and processor() works
 		# but if using other combinations always inspect the final input_ids to ensure they are correct.  Often times you will end up with multiple <bos> tokens
@@ -497,7 +510,7 @@ def chat_joycaption(input_image: Image.Image, prompt: str, temperature: float, t
 		traceback.print_exc()
 		yield {single_status_output: format_error(error_msg)}
 		if "CUDA out of memory" in str(e):
-			yield {global_error: show_global_error("CUDA out of memory error. Try using a more memory-efficient quantization setting (8bit or nf4).")}
+			yield {global_error: show_global_error("CUDA out of memory error. Try reducing batch size or closing other applications using GPU memory.")}
 		else:
 			yield {global_error: show_global_error("Generation failed. See details below.")}
 
@@ -514,8 +527,8 @@ def process_batch_files(
 	max_new_tokens: int,
 	num_workers: int,
 	batch_size: int,
-	quant: str,
-	progress = gr.Progress(track_tqdm=True),
+	output_folder: str,
+	progress = gr.Progress(track_tqdm=False),
 ) -> Generator[dict, None, None]:
 	# Hide any previous global errors
 	yield {global_error: hide_global_error()}
@@ -524,7 +537,30 @@ def process_batch_files(
 		yield {batch_status_output: format_error("No files selected for batch processing. Please upload one or more image files."), batch_zip_output: None}
 		return
 	
-	yield from load_model(quant=quant, status=batch_status_output)
+	# Validate output folder
+	if not output_folder or not output_folder.strip():
+		yield {batch_status_output: format_error("Please specify an output folder path."), batch_zip_output: None}
+		return
+	
+	output_path = Path(output_folder.strip())
+	if not output_path.exists():
+		yield {batch_status_output: format_error(f"Output folder does not exist: {output_path}"), batch_zip_output: None}
+		return
+	
+	if not output_path.is_dir():
+		yield {batch_status_output: format_error(f"Output path is not a folder: {output_path}"), batch_zip_output: None}
+		return
+	
+	# Test write permission
+	try:
+		test_file = output_path / ".write_test"
+		test_file.touch()
+		test_file.unlink()
+	except Exception as e:
+		yield {batch_status_output: format_error(f"Cannot write to output folder: {output_path}. Error: {e}"), batch_zip_output: None}
+		return
+	
+	yield from load_model(status=batch_status_output)
 	gc.collect()
 	torch.cuda.empty_cache()
 
@@ -532,9 +568,33 @@ def process_batch_files(
 		return
 	
 	try:
-		vision_dtype = g_model.vision_tower.vision_model.embeddings.patch_embedding.weight.dtype
-		vision_device = g_model.vision_tower.vision_model.embeddings.patch_embedding.weight.device
-		language_device = g_model.language_model.get_input_embeddings().weight.device
+		# Get dtype and device info - handle different model structures
+		try:
+			# Try the expected structure first
+			vision_dtype = g_model.vision_tower.vision_model.embeddings.patch_embedding.weight.dtype
+			vision_device = g_model.vision_tower.vision_model.embeddings.patch_embedding.weight.device
+		except AttributeError:
+			# Fallback: use a safer approach by checking what attributes exist
+			if hasattr(g_model, 'model') and hasattr(g_model.model, 'vision_tower'):
+				# Some models have an extra 'model' wrapper
+				vision_dtype = g_model.model.vision_tower.vision_model.embeddings.patch_embedding.weight.dtype
+				vision_device = g_model.model.vision_tower.vision_model.embeddings.patch_embedding.weight.device
+			else:
+				# Ultimate fallback: use bfloat16
+				print("[WARN] Could not detect vision tower structure, using bfloat16 on cuda:0")
+				vision_dtype = torch.bfloat16
+				vision_device = torch.device('cuda:0')
+		
+		# Get language model device with fallback
+		try:
+			language_device = g_model.language_model.get_input_embeddings().weight.device
+		except AttributeError:
+			if hasattr(g_model, 'model') and hasattr(g_model.model, 'language_model'):
+				language_device = g_model.model.language_model.get_input_embeddings().weight.device
+			else:
+				# Fallback: try to get device from model parameters
+				print("[WARN] Could not detect language_model structure, inferring device from model")
+				language_device = next(g_model.parameters()).device
 
 		captions_dict: dict[str, str] = {}
 		prompt = build_prompt(caption_type, caption_length, extra_options, name_input)
@@ -550,15 +610,15 @@ def process_batch_files(
 				if len(batch['paths']) == 0:
 					continue
 		
-				# Move to GPU
-				pixel_values = batch['pixel_values'].to(vision_device, non_blocking=True)
+				# Move to GPU and convert to correct dtype
+				pixel_values = batch['pixel_values'].to(vision_device, non_blocking=True).to(vision_dtype)
 				input_ids = batch['input_ids'].to(language_device, non_blocking=True)
 				attention_mask = batch['attention_mask'].to(language_device, non_blocking=True)
 
 				# Generate the captions
 				generate_ids = g_model.generate(
 					input_ids=input_ids,
-					pixel_values=pixel_values.to(vision_dtype),
+					pixel_values=pixel_values,
 					attention_mask=attention_mask,
 					max_new_tokens=max_new_tokens,
 					do_sample=True if temperature > 0 else False,
@@ -574,29 +634,29 @@ def process_batch_files(
 				captions = g_processor.tokenizer.batch_decode(preds, skip_special_tokens=True, clean_up_tokenization_spaces=False)
 
 				for path, caption in zip(batch['paths'], captions):
-					caption_filename = path.with_suffix(".txt").name
-					if caption_filename in captions_dict:
-						print(f"Warning: Duplicate caption filename {caption_filename} for {path}. Skipping.")
-						continue
-					captions_dict[caption_filename] = caption.strip()
-					missing_paths.discard(path)
+					# Write caption file to specified output folder
+					caption_filename = Path(path).stem + ".txt"
+					caption_path = output_path / caption_filename
+					try:
+						with open(caption_path, 'w', encoding='utf-8') as f:
+							f.write(caption.strip())
+						captions_dict[caption_filename] = caption.strip()
+						missing_paths.discard(path)
+						print(f"Saved caption: {caption_path}")
+					except Exception as e:
+						print(f"Error saving caption for {path}: {e}")
 				
 				pbar.update(len(batch['paths']))
 				yield {batch_status_output: format_info(f"Processed {pbar.n}/{len(files_list)} images...")}
 		
-		# Build ZIP
-		tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
-		with open(tmp.name, "wb") as f:
-			with zipfile.ZipFile(f, "w", zipfile.ZIP_DEFLATED) as zf:
-				for fname, text in captions_dict.items():
-					zf.writestr(fname, text)
-		
+		# Show completion message
 		if len(missing_paths) > 0:
 			error_msg = f"Warning: {len(missing_paths)} images could not be processed. Check the console for details."
 			print(error_msg)
-			yield {batch_status_output: format_error(error_msg), batch_zip_output: tmp.name}
+			yield {batch_status_output: format_error(error_msg), batch_zip_output: None}
 		else:
-			yield {batch_status_output: format_success(f"Batch processing complete! Processed {len(captions_dict)} images."), batch_zip_output: tmp.name}
+			success_msg = f"Batch processing complete! Created {len(captions_dict)} caption files in: {output_path}"
+			yield {batch_status_output: format_success(success_msg), batch_zip_output: None}
 
 	except Exception as e:
 		error_msg = f"Error during batch processing: {str(e)}"
@@ -604,7 +664,7 @@ def process_batch_files(
 		traceback.print_exc()
 		yield {batch_status_output: format_error(error_msg), batch_zip_output: None}
 		if "CUDA out of memory" in str(e):
-			yield {global_error: show_global_error("CUDA out of memory! Try reducing batch size or using a more memory-efficient quantization.")}
+			yield {global_error: show_global_error("CUDA out of memory! Try reducing batch size.")}
 		else:
 			yield {global_error: show_global_error("Batch processing failed. See details below.")}
 
@@ -638,7 +698,8 @@ def collate_fn(batch: list[tuple[Path, Image.Image, str, str] | None], *, proces
 			{"role": "system", "content": system_prompt.strip()},
 			{"role": "user", "content": user_prompt.strip()},
 		])
-		images.append(image)
+		# Preprocess image to avoid interpolation issues
+		images.append(preprocess_image(image))
 		paths.append(path)
 	
 	if len(images) == 0:
@@ -656,28 +717,18 @@ with gr.Blocks() as demo:
 
 	global_error = gr.HTML(visible=False)
 
-	with gr.Row(equal_height=True) as top_row:
-		with gr.Column(scale=1):
-			model_quantization = gr.Dropdown(
-				choices=["bf16", "int8", "nf4"],
-				value="bf16",
-				label="Model Quantization",
-				info="Model quantization level (bf16=highest quality, 8bit/nf4=lower memory)",
-			)
-		
-		with gr.Column(scale=3):
-			with gr.Row():
-				caption_type = gr.Dropdown(
-					choices=list(CAPTION_TYPE_MAP.keys()),
-					value="Descriptive",
-					label="Caption Type",
-				)
+	with gr.Row():
+		caption_type = gr.Dropdown(
+			choices=list(CAPTION_TYPE_MAP.keys()),
+			value="Descriptive",
+			label="Caption Type",
+		)
 
-				caption_length = gr.Dropdown(
-					choices=["any", "very short", "short", "medium-length", "long", "very long"] +
-							[str(i) for i in range(20, 261, 10)],
-					label="Caption Length",
-					value="long",
+		caption_length = gr.Dropdown(
+			choices=["any", "very short", "short", "medium-length", "long", "very long"] +
+					[str(i) for i in range(20, 261, 10)],
+			label="Caption Length",
+			value="long",
 				)
 
 	with gr.Accordion("Extra Options", open=False):
@@ -712,6 +763,7 @@ with gr.Blocks() as demo:
 				"""Your response will be used by a text-to-image model, so avoid useless meta phrases like “This image shows…”, "You are looking at...", etc.""",
 			],
 			label="Select one or more",
+			elem_id="extra_options_checkboxes",
 		)
 		
 	name_input = gr.Textbox(label="Person / Character Name", visible=False)
@@ -741,7 +793,7 @@ with gr.Blocks() as demo:
 	with gr.Tabs() as tabs:
 		# Single Image Tab
 		with gr.TabItem("Single Image Processing", id="single_tab"):
-			gr.HTML('<div class="panel-header"><h3>Process a Single Image</h3></div>')
+			gr.HTML('<div style="background-color: #f5f5f5; padding: 10px; margin-bottom: 15px; border-radius: 4px; border-left: 4px solid #4b5563;"><h3 style="color: #000; margin: 0;">Process a Single Image</h3></div>')
 
 			single_status_output = gr.HTML("")
 
@@ -757,13 +809,18 @@ with gr.Blocks() as demo:
 		
 		# Batch Processing Tab
 		with gr.TabItem("Batch Processing", id="batch_tab"):
-			gr.HTML('<div class="panel-header"><h3>Process Multiple Images</h3><p>Upload multiple images to generate captions in bulk. You\'ll receive a ZIP file with all the captions.</p></div>')
+			gr.HTML('<div style="background-color: #f5f5f5; padding: 10px; margin-bottom: 15px; border-radius: 4px; border-left: 4px solid #4b5563;"><h3 style="color: #000; margin: 0 0 5px 0;">Process Multiple Images</h3><p style="color: #000; margin: 0;">Upload multiple images and specify where to save caption files.</p></div>')
 
 			batch_status_output = gr.HTML("")
 
 			with gr.Row():
 				with gr.Column(scale=3):
 					input_files_batch = gr.File(file_count="multiple", file_types=None, label="Upload Images (Batch)", elem_id="batch_file_input")
+					output_folder_input = gr.Textbox(
+						label="Output Folder Path",
+						placeholder="D:\\my_images\\captions",
+						info="Folder where caption .txt files will be saved (must exist and be writable)"
+					)
 				
 				with gr.Column(scale=2):
 					with gr.Group():
@@ -783,10 +840,10 @@ with gr.Blocks() as demo:
 								info="Images to process at once (affects vram usage)"
 							)
 
-						run_button_batch = gr.Button("Start Batch Process & Create ZIP", variant="primary")
-				
-			with gr.Row():
-				batch_zip_output = gr.File(label="Download captions.zip", elem_id="batch_zip_output")
+						run_button_batch = gr.Button("Start Batch Process", variant="primary")
+			
+			# Hidden element - kept for compatibility but not shown to user
+			batch_zip_output = gr.File(label="Download captions.zip", elem_id="batch_zip_output", visible=False)
 
 			
 	
@@ -810,14 +867,14 @@ with gr.Blocks() as demo:
 	# Handle single image captioning
 	run_button_single.click(
 		chat_joycaption,
-		inputs=[input_image_single, prompt_box_single, temperature_slider, top_p_slider, max_tokens_slider, model_quantization],
+		inputs=[input_image_single, prompt_box_single, temperature_slider, top_p_slider, max_tokens_slider],
 		outputs=[single_status_output, output_caption_single, global_error],
 	)
 
 	# Handle batch processing
 	run_button_batch.click(
 		process_batch_files,
-		inputs=[input_files_batch, caption_type, caption_length, extra_options, name_input, temperature_slider, top_p_slider, max_tokens_slider, num_workers_slider, batch_size_slider, model_quantization],
+		inputs=[input_files_batch, caption_type, caption_length, extra_options, name_input, temperature_slider, top_p_slider, max_tokens_slider, num_workers_slider, batch_size_slider, output_folder_input],
 		outputs=[batch_status_output, batch_zip_output, global_error],
 	)
 
