@@ -1,5 +1,5 @@
 # JoyCaption - Advanced Image Captioning Tool
-![JoyCaption Screenshot](gradio-app.webp)
+![JoyCaption Screenshot](gradio-app.jpg)
 
 This is a simple Gradio GUI for the JoyCaption model with enhanced usability and stability.
 
