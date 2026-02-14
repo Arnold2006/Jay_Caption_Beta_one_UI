@@ -4,6 +4,7 @@
 This is a simple Gradio GUI for the JoyCaption model with enhanced usability and stability.
 
 ## Installation
+The fastest and bedst vay is to install it using Pinokio with the script at https://github.com/Arnold2006/Jay_Caption_Beta_one_Batch.git
 
 ### Prerequisites
 - Python 3.8+ 
