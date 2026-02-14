@@ -120,7 +120,7 @@ TITLE = f"""<style>
   <img src="{LOGO_SRC}" alt="JoyCaption logo">
   <div>
     <h1>JoyCaption <span style="font-weight:400">Beta&nbsp;One</span></h1>
-    <p>Image-captioning model&nbsp;|&nbsp; build PO0005</p>
+    <p>Image-captioning model &nbsp;|&nbsp; build mb3500zp</p>
   </div>
 </div>
 <hr>"""
@@ -533,21 +533,21 @@ def process_batch_files(
 	yield {global_error: hide_global_error()}
 
 	if not files_list:
-		yield {batch_status_output: format_error("No files selected for batch processing. Please upload one or more image files."), batch_zip_output: None}
+		yield {batch_progress_bar: gr.update(visible=False), batch_status_output: format_error("No files selected for batch processing. Please upload one or more image files."), batch_zip_output: None}
 		return
 	
 	# Validate output folder
 	if not output_folder or not output_folder.strip():
-		yield {batch_status_output: format_error("Please specify an output folder path."), batch_zip_output: None}
+		yield {batch_progress_bar: gr.update(visible=False), batch_status_output: format_error("Please specify an output folder path."), batch_zip_output: None}
 		return
 	
 	output_path = Path(output_folder.strip())
 	if not output_path.exists():
-		yield {batch_status_output: format_error(f"Output folder does not exist: {output_path}"), batch_zip_output: None}
+		yield {batch_progress_bar: gr.update(visible=False), batch_status_output: format_error(f"Output folder does not exist: {output_path}"), batch_zip_output: None}
 		return
 	
 	if not output_path.is_dir():
-		yield {batch_status_output: format_error(f"Output path is not a folder: {output_path}"), batch_zip_output: None}
+		yield {batch_progress_bar: gr.update(visible=False), batch_status_output: format_error(f"Output path is not a folder: {output_path}"), batch_zip_output: None}
 		return
 	
 	# Test write permission
@@ -556,7 +556,7 @@ def process_batch_files(
 		test_file.touch()
 		test_file.unlink()
 	except Exception as e:
-		yield {batch_status_output: format_error(f"Cannot write to output folder: {output_path}. Error: {e}"), batch_zip_output: None}
+		yield {batch_progress_bar: gr.update(visible=False), batch_status_output: format_error(f"Cannot write to output folder: {output_path}. Error: {e}"), batch_zip_output: None}
 		return
 	
 	yield from load_model(status=batch_status_output)
@@ -602,8 +602,10 @@ def process_batch_files(
 		dataloader = torch.utils.data.DataLoader(ImageDataset(tasks), num_workers=num_workers, shuffle=False, drop_last=False, batch_size=batch_size, collate_fn = partial(collate_fn, processor=g_processor))
 		missing_paths = set(Path(f) for f in files_list)
 
-		yield {batch_status_output: format_info(f"Processing {len(files_list)} images...")}
+		# Show progress bar
+		yield {batch_progress_bar: gr.update(value=0, visible=True), batch_status_output: format_info(f"Processing {len(files_list)} images...")}
 
+		processed_count = 0
 		with tqdm(total=len(files_list), desc="Processing", unit="image") as pbar:
 			for batch in dataloader:
 				if len(batch['paths']) == 0:
@@ -646,22 +648,29 @@ def process_batch_files(
 						print(f"Error saving caption for {path}: {e}")
 				
 				pbar.update(len(batch['paths']))
-				yield {batch_status_output: format_info(f"Processed {pbar.n}/{len(files_list)} images...")}
+				processed_count += len(batch['paths'])
+				
+				# Update progress bar and status
+				progress_percent = (processed_count / len(files_list)) * 100
+				yield {
+					batch_progress_bar: gr.update(value=progress_percent),
+					batch_status_output: format_info(f"Processed {processed_count}/{len(files_list)} images...")
+				}
 		
 		# Show completion message
 		if len(missing_paths) > 0:
 			error_msg = f"Warning: {len(missing_paths)} images could not be processed. Check the console for details."
 			print(error_msg)
-			yield {batch_status_output: format_error(error_msg), batch_zip_output: None}
+			yield {batch_progress_bar: gr.update(value=100, visible=False), batch_status_output: format_error(error_msg), batch_zip_output: None}
 		else:
 			success_msg = f"Batch processing complete! Created {len(captions_dict)} caption files in: {output_path}"
-			yield {batch_status_output: format_success(success_msg), batch_zip_output: None}
+			yield {batch_progress_bar: gr.update(value=100, visible=False), batch_status_output: format_success(success_msg), batch_zip_output: None}
 
 	except Exception as e:
 		error_msg = f"Error during batch processing: {str(e)}"
 		print(error_msg)
 		traceback.print_exc()
-		yield {batch_status_output: format_error(error_msg), batch_zip_output: None}
+		yield {batch_progress_bar: gr.update(visible=False), batch_status_output: format_error(error_msg), batch_zip_output: None}
 		if "CUDA out of memory" in str(e):
 			yield {global_error: show_global_error("CUDA out of memory! Try reducing batch size.")}
 		else:
@@ -754,6 +763,15 @@ with gr.Blocks() as demo:
 			gr.HTML('<div style="background-color: #f5f5f5; padding: 10px; margin-bottom: 15px; border-radius: 4px; border-left: 4px solid #4b5563;"><h3 style="color: #000; margin: 0 0 5px 0;">Process Multiple Images</h3><p style="color: #000; margin: 0;">Upload multiple images and specify where to save caption files.</p></div>')
 
 			batch_status_output = gr.HTML("")
+			batch_progress_bar = gr.Slider(
+				minimum=0, 
+				maximum=100, 
+				value=0, 
+				label="Progress", 
+				interactive=False,
+				visible=False,
+				elem_id="batch_progress_bar"
+			)
 
 			with gr.Row():
 				with gr.Column(scale=3):
@@ -875,7 +893,7 @@ with gr.Blocks() as demo:
 	run_button_batch.click(
 		process_batch_files,
 		inputs=[input_files_batch, caption_type, caption_length, extra_options, name_input, temperature_slider, top_p_slider, max_tokens_slider, num_workers_slider, batch_size_slider, output_folder_input],
-		outputs=[batch_status_output, batch_zip_output, global_error],
+		outputs=[batch_progress_bar, batch_status_output, batch_zip_output, global_error],
 	)
 
 
