@@ -867,7 +867,7 @@ def collate_fn(batch: list[tuple[Path, Image.Image, str, str] | None], *, proces
 	return inputs
 
 
-with gr.Blocks() as demo:
+with gr.Blocks(title="Jay-Captioning") as demo:
 	gr.HTML(TITLE)
 
 	global_error = gr.HTML(visible=False)
