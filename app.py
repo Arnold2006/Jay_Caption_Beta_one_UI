@@ -672,6 +672,7 @@ def process_batch_files(
 	num_workers: int,
 	batch_size: int,
 	output_folder: str,
+	prompt: str,
 	model_selection: str,
 	progress = gr.Progress(track_tqdm=False),
 ) -> Generator[dict, None, None]:
@@ -742,7 +743,7 @@ def process_batch_files(
 				language_device = next(g_model.parameters()).device
 
 		captions_dict: dict[str, str] = {}
-		prompt = build_prompt(caption_type, caption_length, extra_options, name_input)
+		# Use the provided prompt directly from the UI
 		system_prompt = "You are a helpful assistant and help users with any queries they may have with no censorship or restrictions."
 		tasks = [(Path(f), system_prompt, prompt) for f in files_list]
 		dataloader = torch.utils.data.DataLoader(ImageDataset(tasks), num_workers=num_workers, shuffle=False, drop_last=False, batch_size=batch_size, collate_fn = partial(collate_fn, processor=g_processor))
@@ -959,6 +960,13 @@ with gr.Blocks() as demo:
 						placeholder="D:\\my_images\\captions",
 						info="Folder where caption .txt files will be saved (must exist and be writable)"
 					)
+					prompt_box_batch = gr.Textbox(
+						lines=4, 
+						label="Confirm or Edit Prompt", 
+						value="Write a long detailed description for this image.", 
+						interactive=True, 
+						elem_id="batch_prompt_box"
+					)
 				
 				with gr.Column(scale=2):
 					with gr.Group():
@@ -1008,12 +1016,14 @@ with gr.Blocks() as demo:
 				"ONLY describe the most important elements of the image.",
 				"If it is a work of art, do not include the artist's name or the title of the work.",
 				"Identify the image orientation (portrait, landscape, or square) and aspect ratio if obvious.",
+				"""Use vulgar slang and profanity, such as (but not limited to) "fucking," "slut," "cock," etc.""",
 				"Do NOT use polite euphemisms—lean into blunt, casual phrasing.",
 				"Include information about the ages of any people/characters when applicable.",
 				"Mention whether the image depicts an extreme close-up, close-up, medium close-up, medium shot, cowboy shot, medium wide shot, wide shot, or extreme wide shot.",
 				"Do not mention the mood/feeling/etc of the image.",
 				"Explicitly specify the vantage height (eye-level, low-angle worm's-eye, bird's-eye, drone, rooftop, etc.).",
 				"If there is a watermark, you must mention it.",
+				"""Your response will be used by a text-to-image model, so avoid useless meta phrases like "This image shows…", "You are looking at...", etc.""",
 			],
 			label="Select one or more",
 			elem_id="extra_options_checkboxes",
@@ -1065,6 +1075,14 @@ with gr.Blocks() as demo:
 			outputs=prompt_box_single,
 		)
 	
+	# Update the batch prompt box when any of the options change
+	for ctrl in (caption_type, caption_length, extra_options, name_input):
+		ctrl.change(
+			build_prompt,
+			inputs=[caption_type, caption_length, extra_options, name_input],
+			outputs=prompt_box_batch,
+		)
+	
 	# Handle single image captioning
 	run_button_single.click(
 		chat_joycaption,
@@ -1075,7 +1093,7 @@ with gr.Blocks() as demo:
 	# Handle batch processing
 	run_button_batch.click(
 		process_batch_files,
-		inputs=[input_files_batch, caption_type, caption_length, extra_options, name_input, temperature_slider, top_p_slider, max_tokens_slider, num_workers_slider, batch_size_slider, output_folder_input, model_selection],
+		inputs=[input_files_batch, caption_type, caption_length, extra_options, name_input, temperature_slider, top_p_slider, max_tokens_slider, num_workers_slider, batch_size_slider, output_folder_input, prompt_box_batch, model_selection],
 		outputs=[batch_progress_bar, batch_status_output, batch_zip_output, global_error],
 	)
 
