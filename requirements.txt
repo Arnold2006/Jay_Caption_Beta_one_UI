@@ -6,3 +6,6 @@ sentencepiece
 torchvision
 gradio>=5.24.0
 bitsandbytes>=0.46.1
+psutil
+# Optional: For GPU utilization and temperature monitoring
+nvidia-ml-py>=12.535.161
