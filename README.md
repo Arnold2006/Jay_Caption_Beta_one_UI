@@ -24,7 +24,7 @@ A powerful, user-friendly web interface for the JoyCaption image captioning mode
 
 ### ⚡ Model Options
 - **BF16 (Higher Quality)** - Full precision model (~24GB VRAM)
-- **NF4 4-bit (Lower VRAM)** - Quantized model (~12-14GB VRAM)
+- **NF4 4-bit (Lower VRAM)** - Quantized model (~6-8GB VRAM)
   - Uses bitsandbytes NF4 quantization
   - Vision tower preserved in full precision for quality
   - Language model quantized for memory efficiency
