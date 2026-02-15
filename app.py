@@ -1015,7 +1015,7 @@ with gr.Blocks() as demo:
 				"Do not mention the mood/feeling/etc of the image.",
 				"Explicitly specify the vantage height (eye-level, low-angle worm's-eye, bird's-eye, drone, rooftop, etc.).",
 				"If there is a watermark, you must mention it.",
-				"""Your response will be used by a text-to-image model, so avoid useless meta phrases like "This image shows…", "You are looking at...", etc.""",
+				"""Your response will be used by a text-to-image model, so avoid useless meta phrases like "This image shows...," "You are looking at...," etc.""",
 			],
 			label="Select one or more",
 			elem_id="extra_options_checkboxes",
